@@ -40,10 +40,10 @@ only has to remove the residual slide, which is what the article recommends.
 |------|-----------|
 | `src/ik.ts` | Pure math, no React: `twoBoneIK`, `lookAtTip`, `updateContact`, `decaySpringDamper`. Copy this file into any three.js project. |
 | `src/Character.tsx` | Loads the rig, blends Idle/Running, WASD locomotion, ground raycasts, runs the IK pass in `useFrame`. |
-| `src/App.tsx` | Scene, ground plane and steps, and the `?compare` layout. |
+| `src/App.tsx` | Scene and the course (straddle step, stairs up and down, ramp), and the `?compare` layout. |
 | `src/ik.test.ts` | Runnable assertions for the solver and lock transitions. |
 | `public/ybot.glb` | Mixamo Y Bot mesh and skeleton (converted from FBX with Blender, no animations). |
-| `public/zen_ben.glb` | Source of the animation clips. |
+| `public/clips.glb` | Idle and Running clips on a mixamorig skeleton (no mesh). |
 
 ## Taking it into your game
 
@@ -68,6 +68,8 @@ rotations would poison contact detection.
 **Plug in your ground.** `groundY(point)` is a downward raycast against `ground.current.children`.
 Swap it for your physics engine's query or a heightfield lookup. It is called a handful of times
 per foot per frame, so keep it cheap.
+
+**See it.** In the Leva panel, `debug` shows each toe target (green when locked), `trails` draws a dot wherever a toe touches the ground (a sliding foot leaves a smear), and `chain` draws the hip, knee, ankle and toe chain.
 
 **Tune it.** The Leva panel exposes the four numbers that matter. Reasonable starting points for a
 human at 1 unit = 1 m:

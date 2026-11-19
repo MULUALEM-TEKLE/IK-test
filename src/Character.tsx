@@ -2,15 +2,34 @@ import { useAnimations, useGLTF } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import { useControls } from 'leva'
 import { useEffect, useMemo, useRef } from 'react'
-import { AnimationClip, Box3, EventDispatcher, Group, Mesh, MeshBasicMaterial, Object3D, Raycaster, SkinnedMesh, Vector3 } from 'three'
+import {
+  AnimationClip,
+  Box3,
+  BufferAttribute,
+  BufferGeometry,
+  EventDispatcher,
+  Group,
+  Mesh,
+  MeshBasicMaterial,
+  Object3D,
+  Points,
+  PointsMaterial,
+  Raycaster,
+  SkinnedMesh,
+  Vector3,
+} from 'three'
+import { Line2 } from 'three/examples/jsm/lines/Line2.js'
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { createContact, lookAtTip, twoBoneIK, updateContact, type FootContact } from './ik'
 
 const MODEL = '/ybot.glb' // mesh + skeleton
-const ANIMS = '/zen_ben.glb' // clips (same mixamorig skeleton)
+const ANIMS = '/clips.glb' // Idle + Running clips on a mixamorig skeleton, no mesh
 const RUN_SPEED = 3.5
 const UP = new Vector3(0, 1, 0)
 const DOWN = new Vector3(0, -1, 0)
+const TRAIL = 400 // toe trail length in frames
 
 type Leg = {
   hip: Object3D
@@ -21,6 +40,13 @@ type Leg = {
   prevToe: Vector3
   votes: boolean[]
   debug: Mesh | null
+  trail: Points // toe on the ground, one dot per frame: a sliding foot draws a smear, a locked foot a dot
+  trailCount: number
+  chain: Line2 // hip, knee, ankle, toe (its child Points marks the joints)
+}
+
+function pointsGeometry(n: number) {
+  return new BufferGeometry().setAttribute('position', new BufferAttribute(new Float32Array(n * 3), 3))
 }
 
 const _ray = new Raycaster()
@@ -63,6 +89,8 @@ export function Character({ ground, forceIK, yaw = 0, role }: Props) {
     unlockRadius: { value: 0.25, min: 0, max: 1, step: 0.01 },
     halflife: { value: 0.04, min: 0.005, max: 0.3, step: 0.005 },
     debug: true,
+    trails: true,
+    chain: false,
   })
 
   // rig lookup + calibration, once
@@ -91,7 +119,19 @@ export function Character({ ground, forceIK, yaw = 0, role }: Props) {
       prevToe: bone(side + 'ToeBase').getWorldPosition(new Vector3()),
       votes: [],
       debug: null,
+      trail: Object.assign(new Points(pointsGeometry(TRAIL), new PointsMaterial({ color: '#ffb347', size: 0.08, transparent: true, depthWrite: false })), {
+        frustumCulled: false,
+      }),
+      trailCount: 0,
+      chain: Object.assign(new Line2(new LineGeometry(), new LineMaterial({ color: '#ffffff', linewidth: 4, depthTest: false })), {
+        frustumCulled: false,
+        renderOrder: 10,
+      }),
     }))
+    for (const leg of legs) {
+      const joints = new Points(pointsGeometry(4), new PointsMaterial({ color: '#ffffff', size: 0.07, depthTest: false }))
+      leg.chain.add(Object.assign(joints, { frustumCulled: false, renderOrder: 11 }))
+    }
     ;((window as unknown as { __rigs: Record<string, Leg[]> }).__rigs ??= {})[role ?? 'single'] = legs // ponytail: dev probe
     return { legs, toeOffset }
   }, [scene, role])
@@ -146,6 +186,27 @@ export function Character({ ground, forceIK, yaw = 0, role }: Props) {
     return hit ? hit.point.y : 0
   }
 
+  // debug drawing of the final pose: toe trail on the ground and the leg chain
+  const drawHelpers = () => {
+    for (const leg of rig.legs) {
+      leg.toe.getWorldPosition(_toe)
+      const gy = groundY(_toe)
+      leg.trail.visible = ik.trails
+      if (_toe.y - gy < rig.toeOffset + 0.02) {
+        ;(leg.trail.geometry.attributes.position as BufferAttribute).setXYZ(leg.trailCount++ % TRAIL, _toe.x, gy + 0.004, _toe.z)
+        leg.trail.geometry.attributes.position.needsUpdate = true
+        leg.trail.geometry.setDrawRange(0, Math.min(leg.trailCount, TRAIL))
+      }
+      leg.chain.visible = ik.chain
+      if (!ik.chain) continue
+      const pts = [leg.hip, leg.knee, leg.heel, leg.toe].flatMap((b) => b.getWorldPosition(_v).toArray())
+      leg.chain.geometry.setPositions(pts)
+      const joints = (leg.chain.children[0] as Points).geometry.attributes.position as BufferAttribute
+      joints.set(pts)
+      joints.needsUpdate = true
+    }
+  }
+
   useFrame((_, dt) => {
     dt = Math.min(dt, 1 / 20)
     const g = group.current
@@ -165,6 +226,8 @@ export function Character({ ground, forceIK, yaw = 0, role }: Props) {
       if (keys.has('KeyS')) _move.sub(_fwd)
       if (keys.has('KeyD')) _move.addScaledVector(_v.crossVectors(_fwd, UP), 1)
       if (keys.has('KeyA')) _move.addScaledVector(_v.crossVectors(_fwd, UP), -1)
+      const drive = (window as unknown as { __drive?: { x: number; z: number } | null }).__drive // ponytail: dev hook for scripted captures
+      if (drive) _move.set(drive.x, 0, drive.z)
       const wants = _move.lengthSq() > 0
       if (wants) {
         _move.normalize()
@@ -211,6 +274,8 @@ export function Character({ ground, forceIK, yaw = 0, role }: Props) {
     g.updateMatrixWorld(true)
     if (!(forceIK ?? ik.enabled)) {
       for (const leg of rig.legs) if (leg.debug) leg.debug.visible = false
+      scene.position.y = 0
+      drawHelpers()
       return
     }
 
@@ -252,6 +317,7 @@ export function Character({ ground, forceIK, yaw = 0, role }: Props) {
         ;(leg.debug.material as MeshBasicMaterial).color.set(leg.contact.lock ? '#3f3' : '#f33')
       }
     }
+    drawHelpers()
   })
 
   return (
@@ -259,6 +325,12 @@ export function Character({ ground, forceIK, yaw = 0, role }: Props) {
       <group ref={group}>
         <primitive object={scene} />
       </group>
+      {rig.legs.map((leg, i) => (
+        <group key={i}>
+          <primitive object={leg.trail} />
+          <primitive object={leg.chain} />
+        </group>
+      ))}
       {rig.legs.map((leg, i) => (
         <mesh key={i} ref={(m) => void (leg.debug = m)}>
           <sphereGeometry args={[0.03]} />
