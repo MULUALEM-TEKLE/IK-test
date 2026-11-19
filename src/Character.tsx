@@ -25,7 +25,7 @@ import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.j
 import { createContact, lookAtTip, twoBoneIK, updateContact, type FootContact } from './ik'
 
 const MODEL = '/ybot.glb' // mesh + skeleton
-const ANIMS = '/clips.glb' // Idle + Running clips on a mixamorig skeleton, no mesh
+const ANIMS = '/clips.glb' // Idle, Walking, Running clips on a mixamorig skeleton, no mesh
 const RUN_SPEED = 3.5
 const UP = new Vector3(0, 1, 0)
 const DOWN = new Vector3(0, -1, 0)
@@ -53,12 +53,13 @@ const _ray = new Raycaster()
 const _v = new Vector3()
 const _toe = new Vector3()
 const _heel = new Vector3()
+const _anim = new Vector3()
 const _target = new Vector3()
 const _fwd = new Vector3()
 const _move = new Vector3()
 
 // compare mode: the driver runs locomotion + clips, the follower mirrors them so only IK differs
-const sync = { pos: new Vector3(), yaw: 0, speed: 0, idleTime: 0, runTime: 0, camOwner: 'driver', camPos: new Vector3(), camTarget: new Vector3() }
+const sync = { pos: new Vector3(), yaw: 0, speed: 0, idleTime: 0, walkTime: 0, runTime: 0, camOwner: 'driver', camPos: new Vector3(), camTarget: new Vector3() }
 
 type Props = { ground: React.RefObject<Group | null>; forceIK?: boolean; yaw?: number; role?: 'driver' | 'follower' }
 
@@ -136,35 +137,39 @@ export function Character({ ground, forceIK, yaw = 0, role }: Props) {
     return { legs, toeOffset }
   }, [scene, role])
 
-  // how fast the ground moves under the planted foot in the in-place Running clip
+  // how fast the ground moves under the planted foot in each in-place clip
   const clipSpeed = useMemo(() => {
-    const clip = AnimationClip.findByName(animations, 'Running')!
-    const action = mixer.clipAction(clip, scene)
-    action.play()
-    const toe = rig.legs[0].toe
-    const samples: { y: number; v: number }[] = []
-    let prev: Vector3 | null = null
-    const step = 1 / 60
-    for (let t = 0; t <= clip.duration; t += step) {
-      mixer.setTime(t)
-      scene.updateMatrixWorld(true)
-      const p = toe.getWorldPosition(new Vector3())
-      if (prev) samples.push({ y: p.y, v: Math.hypot(p.x - prev.x, p.z - prev.z) / step })
-      prev = p
+    const measure = (name: string) => {
+      const clip = AnimationClip.findByName(animations, name)!
+      const action = mixer.clipAction(clip, scene)
+      action.play()
+      const toe = rig.legs[0].toe
+      const samples: { y: number; v: number }[] = []
+      let prev: Vector3 | null = null
+      const step = 1 / 60
+      for (let t = 0; t <= clip.duration; t += step) {
+        mixer.setTime(t)
+        scene.updateMatrixWorld(true)
+        const p = toe.getWorldPosition(new Vector3())
+        if (prev) samples.push({ y: p.y, v: Math.hypot(p.x - prev.x, p.z - prev.z) / step })
+        prev = p
+      }
+      action.stop()
+      mixer.uncacheAction(clip, scene)
+      const ys = samples.map((s) => s.y)
+      const lo = Math.min(...ys) + (Math.max(...ys) - Math.min(...ys)) * 0.15
+      const stance = samples.filter((s) => s.y < lo).map((s) => s.v).sort((a, b) => a - b)
+      return stance[Math.floor(stance.length / 2)] ?? RUN_SPEED
     }
-    action.stop()
-    mixer.uncacheAction(clip, scene)
-    const ys = samples.map((s) => s.y)
-    const lo = Math.min(...ys) + (Math.max(...ys) - Math.min(...ys)) * 0.15
-    const stance = samples.filter((s) => s.y < lo).map((s) => s.v).sort((a, b) => a - b)
-    const v = stance[Math.floor(stance.length / 2)] ?? RUN_SPEED
-    console.log('Running clip ground speed (m/s):', v.toFixed(2), 'toe offset (m):', rig.toeOffset.toFixed(3))
+    const v = { Walking: measure('Walking'), Running: measure('Running') }
+    console.log('clip ground speed (m/s):', v, 'toe offset (m):', rig.toeOffset.toFixed(3))
     return v
   }, [animations, mixer, scene, rig])
 
   useEffect(() => {
     group.current.rotation.y = yaw
     actions.Idle!.play()
+    actions.Walking!.setEffectiveWeight(0).play()
     actions.Running!.setEffectiveWeight(0).play()
     const down = (e: KeyboardEvent) => keys.add(e.code)
     const up = (e: KeyboardEvent) => keys.delete(e.code)
@@ -217,6 +222,7 @@ export function Character({ ground, forceIK, yaw = 0, role }: Props) {
       g.rotation.y = sync.yaw
       speed.current = sync.speed
       actions.Idle!.time = sync.idleTime
+      actions.Walking!.time = sync.walkTime
       actions.Running!.time = sync.runTime
     } else {
       // --- locomotion: camera-relative WASD ---
@@ -226,30 +232,37 @@ export function Character({ ground, forceIK, yaw = 0, role }: Props) {
       if (keys.has('KeyS')) _move.sub(_fwd)
       if (keys.has('KeyD')) _move.addScaledVector(_v.crossVectors(_fwd, UP), 1)
       if (keys.has('KeyA')) _move.addScaledVector(_v.crossVectors(_fwd, UP), -1)
-      const drive = (window as unknown as { __drive?: { x: number; z: number } | null }).__drive // ponytail: dev hook for scripted captures
+      const drive = (window as unknown as { __drive?: { x: number; z: number; walk?: boolean } | null }).__drive // ponytail: dev hook for scripted captures
       if (drive) _move.set(drive.x, 0, drive.z)
+      const walking = drive ? !!drive.walk : keys.has('ShiftLeft') || keys.has('ShiftRight')
       const wants = _move.lengthSq() > 0
       if (wants) {
         _move.normalize()
         const yaw = Math.atan2(_move.x, _move.z)
         g.rotation.y += Math.atan2(Math.sin(yaw - g.rotation.y), Math.cos(yaw - g.rotation.y)) * Math.min(1, dt * 10)
       }
-      speed.current += ((wants ? RUN_SPEED : 0) - speed.current) * Math.min(1, dt * 6)
+      speed.current += ((wants ? (walking ? clipSpeed.Walking : RUN_SPEED) : 0) - speed.current) * Math.min(1, dt * 6)
       g.getWorldDirection(_fwd)
       g.position.addScaledVector(_fwd, speed.current * dt)
       g.position.y += (groundY(g.position) - g.position.y) * Math.min(1, dt * 10)
     }
 
-    const blend = speed.current / RUN_SPEED
-    actions.Idle!.setEffectiveWeight(1 - blend)
-    actions.Running!.setEffectiveWeight(blend)
-    actions.Running!.setEffectiveTimeScale(Math.max(0.5, speed.current / clipSpeed))
+    // blend by speed: idle -> walk -> run, each clip played at the rate that matches its feet to the ground
+    // ponytail: walk and run are not phase-synced, the crossfade is short; sync by foot phase if it shows
+    const run = Math.min(1, Math.max(0, (speed.current - clipSpeed.Walking) / (RUN_SPEED - clipSpeed.Walking)))
+    const walk = Math.min(1, speed.current / clipSpeed.Walking) - run
+    actions.Idle!.setEffectiveWeight(1 - walk - run)
+    actions.Walking!.setEffectiveWeight(walk)
+    actions.Running!.setEffectiveWeight(run)
+    actions.Walking!.setEffectiveTimeScale(Math.max(0.5, speed.current / clipSpeed.Walking))
+    actions.Running!.setEffectiveTimeScale(Math.max(0.5, speed.current / clipSpeed.Running))
     if (role === 'follower') mixer.update(0)
     if (role === 'driver') {
       sync.pos.copy(g.position)
       sync.yaw = g.rotation.y
       sync.speed = speed.current
       sync.idleTime = actions.Idle!.time
+      sync.walkTime = actions.Walking!.time
       sync.runTime = actions.Running!.time
     }
 
@@ -293,10 +306,12 @@ export function Character({ ground, forceIK, yaw = 0, role }: Props) {
       leg.heel.getWorldPosition(_heel)
       const gy = groundY(_toe) + rig.toeOffset
 
-      // contact detection: slow and low, with a majority vote to kill flicker
-      const vel = _v.subVectors(_toe, leg.prevToe).divideScalar(dt).length()
-      leg.prevToe.copy(_toe)
-      leg.votes.push(vel < ik.velThreshold && _toe.y - gy < ik.heightThreshold)
+      // contact detection on the animation itself: slow and low over the root's floor, with the root's climb taken
+      // out (on stairs it adds ~2 m/s), and a majority vote to kill flicker; the lock below puts the pin on the terrain
+      _anim.copy(_toe).setY(_toe.y - g.position.y - scene.position.y)
+      const vel = _v.subVectors(_anim, leg.prevToe).divideScalar(dt).length()
+      leg.prevToe.copy(_anim)
+      leg.votes.push(vel < ik.velThreshold && _anim.y - rig.toeOffset < ik.heightThreshold)
       if (leg.votes.length > 5) leg.votes.shift()
       // unanimous to start a lock, majority to keep it (hysteresis against toe-off flicker)
       const yes = leg.votes.filter(Boolean).length

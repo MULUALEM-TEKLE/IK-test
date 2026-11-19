@@ -9,7 +9,7 @@ clips stay untouched. IK only nudges the pose; it never replaces it.
 
 ```sh
 pnpm install
-pnpm dev             # http://localhost:5173        WASD to run, drag to orbit, Leva panel to tune
+pnpm dev             # http://localhost:5173        WASD to run, Shift to walk, drag to orbit, Leva panel to tune
                      # http://localhost:5173/?compare   IK off vs IK on, same input, mirrored cameras
 node src/ik.test.ts  # self-check for the solver and the contact state machine
 ```
@@ -19,13 +19,15 @@ node src/ik.test.ts  # self-check for the solver and the contact state machine
 Every frame, after the animation mixer has posed the skeleton:
 
 1. **Contact detection.** Read the animated toe joint. It is in contact when it is slow
-   (world velocity under `velThreshold`) and low (under `heightThreshold` above the ground
-   below it). A five-frame vote removes flicker: unanimous to start a lock, majority to keep it.
-2. **Locking.** On contact start the toe's current position is frozen on the ground. It unlocks
-   when contact ends or the animated toe drifts more than `unlockRadius` away. Each switch is
+   (velocity under `velThreshold`) and low (under `heightThreshold`), both measured on the
+   animation itself: over the root's floor, with the root's climb taken out (on stairs it adds
+   about 2 m/s). The terrain only matters for where the lock goes. A five-frame vote removes flicker: unanimous to start a lock, majority to keep it.
+2. **Locking.** On contact start the toe's current position is frozen on the ground under it. It
+   unlocks when contact ends or the animated toe drifts more than `unlockRadius` away
+   horizontally (on steps the animated toe sits above or below the pin without sliding). Each switch is
    inertialized (spring-damper offset with `halflife`), so the output position never pops.
 3. **Two-bone IK.** Hip and knee are rotated so the heel reaches its target, keeping the knee in
-   the plane it already bends in, with a soft clamp on full extension. The foot bone is then
+   the plane it already bends in, clamped 1 cm short of full extension. The foot bone is then
    aimed so the toe hits the locked point, and the toe is clamped above the ground.
 4. **Body height.** If a planted foot's ground is lower than the root's ground the whole model is
    lowered by that amount, so a leg can reach down a step without hyperextending.
@@ -39,11 +41,11 @@ only has to remove the residual slide, which is what the article recommends.
 | File | What it is |
 |------|-----------|
 | `src/ik.ts` | Pure math, no React: `twoBoneIK`, `lookAtTip`, `updateContact`, `decaySpringDamper`. Copy this file into any three.js project. |
-| `src/Character.tsx` | Loads the rig, blends Idle/Running, WASD locomotion, ground raycasts, runs the IK pass in `useFrame`. |
-| `src/App.tsx` | Scene and the course (straddle step, stairs up and down, ramp), and the `?compare` layout. |
+| `src/Character.tsx` | Loads the rig, blends Idle/Walking/Running by speed, WASD locomotion, ground raycasts, runs the IK pass in `useFrame`. |
+| `src/App.tsx` | Scene and the course (straddle step, stairs up and down, ramp), real-dimension stairs beside it (17.5 cm rise, 28 cm tread), and the `?compare` layout. |
 | `src/ik.test.ts` | Runnable assertions for the solver and lock transitions. |
 | `public/ybot.glb` | Mixamo Y Bot mesh and skeleton (converted from FBX with Blender, no animations). |
-| `public/clips.glb` | Idle and Running clips on a mixamorig skeleton (no mesh). |
+| `public/clips.glb` | Idle, Walking and Running clips on a mixamorig skeleton (no mesh). Walking is the X Bot `walk` from the three.js examples (`Xbot.glb`, r170), retargeted. |
 
 ## Taking it into your game
 
@@ -55,7 +57,9 @@ memo to your hip, knee, ankle and toe joints. The chain must be hip → knee →
 **Use your own clips.** Point `ANIMS` at a GLB that shares the skeleton, or put the clips in the
 model itself and drop the second loader. When clips come from a different model, keep only
 rotation tracks plus the hips translation and scale that translation by the ratio of hip heights.
-`Character.tsx` already does this. Clips with real root motion also work: the contact
+`Character.tsx` already does this. That works only when both skeletons share bone rest orientations;
+if not (three.js's `Xbot.glb` has identity bone axes), bake a world-space retarget first, as was done
+for the Walking clip. Clips with real root motion also work: the contact
 detector reads world-space toe velocity, so it does not care whether the root moves via clip or
 via your controller.
 

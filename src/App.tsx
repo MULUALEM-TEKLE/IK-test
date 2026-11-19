@@ -8,8 +8,8 @@ import { Character } from './Character'
 const COMPARE = location.search.includes('compare')
 
 // One course along +x: a step whose edge runs under the path (straddle pose), stairs up, stairs down, a ramp and a platform.
-// x, z, height (1.2 m blocks)
-const BOXES: [x: number, z: number, h: number][] = [
+// x, z, height, depth along x (default 1.2 m blocks)
+const BOXES: [x: number, z: number, h: number, d?: number][] = [
   [2.2, -0.62, 0.22],
   [4.2, 0, 0.15],
   [5.4, 0, 0.3],
@@ -18,6 +18,15 @@ const BOXES: [x: number, z: number, h: number][] = [
   [9, 0, 0.15],
   [13.6, 0, 0.35],
 ]
+// real-world stairs beside the course: 17.5 cm rise, 28 cm tread, up to a landing and down again
+const STAIRS = { x: 2, z: -4, n: 8, rise: 0.175, tread: 0.28, landing: 1.2 }
+const STEP_HS = Array.from({ length: STAIRS.n }, (_, i) => (i + 1) * STAIRS.rise) // the last one is the landing
+let stairX = STAIRS.x
+for (const [i, h] of [...STEP_HS, ...STEP_HS.slice(0, -1).reverse()].entries()) {
+  const d = i === STAIRS.n - 1 ? STAIRS.landing : STAIRS.tread
+  BOXES.push([stairX + d / 2, STAIRS.z, h, d])
+  stairX += d
+}
 // x start, length, rise: a slope up to the platform
 const RAMP = { x: 10.6, len: 2.4, rise: 0.35 }
 const RAMP_ANGLE = Math.atan2(RAMP.rise, RAMP.len)
@@ -73,9 +82,9 @@ function Scene({ forceIK, label, role }: { forceIK?: boolean; label?: string; ro
             <planeGeometry args={[80, 80]} />
             <meshStandardMaterial color="#1b1d23" roughness={1} />
           </mesh>
-          {BOXES.map(([x, z, h], i) => (
+          {BOXES.map(([x, z, h, d = 1.2], i) => (
             <mesh key={i} position={[x, h / 2, z]} castShadow receiveShadow>
-              <boxGeometry args={[1.2, h, 1.2]} />
+              <boxGeometry args={[d, h, 1.2]} />
               <meshStandardMaterial color="#cfc6b8" roughness={0.85} />
               <Edges color="#8a8172" />
             </mesh>
@@ -112,7 +121,7 @@ function Scene({ forceIK, label, role }: { forceIK?: boolean; label?: string; ro
         </Suspense>
         <OrbitControls makeDefault enablePan={false} maxPolarAngle={Math.PI / 2 - 0.05} />
       </Canvas>
-      <div className="hint">WASD to run · drag to orbit</div>
+      <div className="hint">WASD to run · hold Shift to walk · drag to orbit</div>
     </div>
   )
 }

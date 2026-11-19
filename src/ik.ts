@@ -61,7 +61,8 @@ export function updateContact(
   _inVel.subVectors(inputPos, c.target).divideScalar(dt + EPS)
   c.target.copy(inputPos)
 
-  const unlock = c.lock && _tmp.subVectors(c.point, inputPos).length() > unlockRadius
+  // horizontal drift only: on steps and slopes the animated toe sits above or below the pin without sliding
+  const unlock = c.lock && Math.hypot(c.point.x - inputPos.x, c.point.z - inputPos.z) > unlockRadius
   if (!c.state && inputState && !c.lock) {
     c.lock = true
     c.point.copy(c.position).setY(groundY)

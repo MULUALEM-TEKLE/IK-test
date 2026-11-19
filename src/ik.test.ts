@@ -47,4 +47,12 @@ assert.ok(!c.lock && c.position.length() < 0.01, `unlock should be continuous, g
 for (let i = 0; i < 120; i++) updateContact(c, lift, false, 0, 0.3, 0.05, dt)
 assert.ok(c.position.distanceTo(lift) < 1e-3, 'offset should decay to input')
 
+// unlock radius is horizontal: a toe 0.5 above its pin (stairs) stays locked, 0.35 to the side unlocks
+const s = createContact(new Vector3(0, 0, 0))
+updateContact(s, new Vector3(0, 0, 0), true, 0, 0.3, 0.05, dt)
+updateContact(s, new Vector3(0, 0.5, 0), true, 0, 0.3, 0.05, dt)
+assert.ok(s.lock, 'height difference alone must not unlock')
+updateContact(s, new Vector3(0.35, 0.5, 0), true, 0, 0.3, 0.05, dt)
+assert.ok(!s.lock, 'horizontal drift past the radius must unlock')
+
 console.log('ik.test ok')
