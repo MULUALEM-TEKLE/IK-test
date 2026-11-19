@@ -1,6 +1,6 @@
 # Handoff
 
-Updated: 2026-11-19 09:30, commit ac0fec1, session 50a7afe2 (Reddit explainer video)
+Updated: 2026-11-19 10:20, commit ac0fec1, session 50a7afe2 (Reddit explainer video)
 
 ## Goal
 
@@ -8,7 +8,7 @@ Small, readable foot locking + two-bone IK on a Mixamo rig in React Three Fiber,
 
 ## In flight
 
-- main, session 50a7afe2: explainer video done (`_/social/2026-11-19-ik-explainer/upload/explainer-16x9.mp4`, 68 s). Five Reddit payloads in `upload/reddit-*.json`. Next: post on the user's "go" (section 5 Reddit of the social-post skill), then log URLs in accounts.json.
+- main, session 50a7afe2: explainer posted to r/GraphicsProgramming (https://www.reddit.com/r/GraphicsProgramming/comments/1y02o3o/). r/threejs, r/IndieDev, r/creativecoding, r/gameenginedevs reached "clicked Post" but no URL came back. Next: the user checks those tabs; if not live, retry one at a time ~10 min apart with `upload/explainer-16x9-light.mp4` (15 MB).
 
 ## Blocked / waiting
 
